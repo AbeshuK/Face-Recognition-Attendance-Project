@@ -1,1 +1,1 @@
-# Face-Recognition-Attendance-Project
+# Face-Recognition-Attendance-Management-System
