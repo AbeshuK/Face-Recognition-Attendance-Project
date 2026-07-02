@@ -1,218 +1,124 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+import cv2
+import numpy as np
+import face_recognition
+import os
+from datetime import datetime
 
-# C extensions
-*.so
+# ---- Config ----
+TRAINING_PATH = 'Training_images'
+ATTENDANCE_FILE = 'Attendance.csv'
+FACE_MATCH_TOLERANCE = 0.6   # lower = stricter match
+FRAME_RESIZE_SCALE = 0.25    # smaller = faster but less accurate detection
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+def load_training_images(path):
+    images = []
+    class_names = []
+    if not os.path.isdir(path):
+        raise FileNotFoundError(f"Training folder '{path}' not found.")
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+    for filename in os.listdir(path):
+        img_path = os.path.join(path, filename)
+        img = cv2.imread(img_path)
+        if img is None:
+            print(f"[WARN] Could not read image: {filename} (skipping)")
+            continue
+        images.append(img)
+        class_names.append(os.path.splitext(filename)[0])
+    return images, class_names
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
 
-# Translations
-*.mo
-*.pot
+def find_encodings(images, class_names):
+    """Returns (encodings, matching_names) - skips images with no detectable face."""
+    encode_list = []
+    valid_names = []
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+    for img, name in zip(images, class_names):
+        rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        encodings = face_recognition.face_encodings(rgb_img)
+        if not encodings:
+            print(f"[WARN] No face detected in training image for '{name}' (skipping)")
+            continue
+        encode_list.append(encodings[0])
+        valid_names.append(name)
 
-# Flask stuff:
-instance/
-.webassets-cache
+    return encode_list, valid_names
 
-# Scrapy stuff:
-.scrapy
 
-# Sphinx documentation
-docs/_build/
+def ensure_attendance_file(path):
+    if not os.path.exists(path):
+        with open(path, 'w') as f:
+            f.write('Name,Time\n')
 
-# PyBuilder
-.pybuilder/
-target/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+def mark_attendance(name, path):
+    with open(path, 'r+') as f:
+        my_data_list = f.readlines()
+        name_list = [line.split(',')[0].strip() for line in my_data_list]
 
-# IPython
-profile_default/
-ipython_config.py
+        if name not in name_list:
+            now = datetime.now()
+            dt_string = now.strftime('%H:%M:%S')
+            f.write(f'{name},{dt_string}\n')
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-# Pipfile.lock
+def main():
+    images, class_names = load_training_images(TRAINING_PATH)
+    print(f"Loaded {len(images)} training images: {class_names}")
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
+    encode_list_known, class_names = find_encodings(images, class_names)
+    print(f"Encoding complete. {len(encode_list_known)} usable face(s).")
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-# poetry.lock
-# poetry.toml
+    if not encode_list_known:
+        print("[ERROR] No usable face encodings found. Check your training images.")
+        return
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-# pdm.lock
-# pdm.toml
-.pdm-python
-.pdm-build/
+    ensure_attendance_file(ATTENDANCE_FILE)
 
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-# pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("[ERROR] Could not open webcam.")
+        return
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+    try:
+        while True:
+            success, img = cap.read()
+            if not success:
+                print("[WARN] Failed to read frame from webcam.")
+                continue
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+            img_small = cv2.resize(img, (0, 0), None, FRAME_RESIZE_SCALE, FRAME_RESIZE_SCALE)
+            img_small = cv2.cvtColor(img_small, cv2.COLOR_BGR2RGB)
 
-# Redis
-*.rdb
-*.aof
-*.pid
+            faces_cur_frame = face_recognition.face_locations(img_small)
+            encodes_cur_frame = face_recognition.face_encodings(img_small, faces_cur_frame)
 
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
+            for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
+                matches = face_recognition.compare_faces(
+                    encode_list_known, encode_face, tolerance=FACE_MATCH_TOLERANCE
+                )
+                face_dis = face_recognition.face_distance(encode_list_known, encode_face)
+                match_index = np.argmin(face_dis)
 
-# ActiveMQ
-activemq-data/
+                if matches[match_index]:
+                    name = class_names[match_index].upper()
+                    scale = int(1 / FRAME_RESIZE_SCALE)
+                    y1, x2, y2, x1 = face_loc
+                    y1, x2, y2, x1 = y1 * scale, x2 * scale, y2 * scale, x1 * scale
 
-# SageMath parsed files
-*.sage.py
+                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.rectangle(img, (x1, y2 - 35), (x2, y2), (0, 255, 0), cv2.FILLED)
+                    cv2.putText(img, name, (x1 + 6, y2 - 6),
+                                cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+                    mark_attendance(name, ATTENDANCE_FILE)
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+            cv2.imshow('Webcam', img)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
 
-# Spyder project settings
-.spyderproject
-.spyproject
 
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-# Temporary file for partial code execution
-tempCodeRunnerFile.py
-
-# Ruff stuff:
-.ruff_cache/
-
-# PyPI configuration file
-.pypirc
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
+if __name__ == '__main__':
+    main()
