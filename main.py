@@ -129,9 +129,7 @@ def main():
             encodes_cur_frame = face_recognition.face_encodings(img_small, faces_cur_frame)
 
             for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
-                matches = face_recognition.compare_faces(
-                    encode_list_known, encode_face, tolerance=FACE_MATCH_TOLERANCE
-                )
+                matches = face_recognition.compare_faces(encode_list_known, encode_face, tolerance=FACE_MATCH_TOLERANCE)
                 face_dis = face_recognition.face_distance(encode_list_known, encode_face)
                 match_index = np.argmin(face_dis)
 
